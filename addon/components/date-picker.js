@@ -10,7 +10,8 @@ export default Ember.TextField.extend({
   utc: false,                 // whether the input value is meant as a UTC date
   dismissOnScroll: false,     // whether the picker should dismiss on any scroll event
   scrollContainer: null,      // where to attach the picker
-  date: null,
+  date: null,                 // local date value, can be observed to handle input change
+  initDate: null,             // value being received from parent component
   hasNullFooter: false,
   nullFooterCheckboxId: `checkBox${Math.floor(Math.random() * 100000)}`,
   nullFooterCheckboxValue: false,
@@ -65,10 +66,9 @@ export default Ember.TextField.extend({
             onClose: function() {
               // use `moment` or `moment.utc` depending on `utc` flag
               var momentFunction = that.get('utc') ? window.moment.utc : window.moment,
-                  d = momentFunction(that.get('value'), that.get('format'));
-
+                  d = momentFunction(that.get('date'), that.get('format'));
               // has there been a valid date or any value at all?
-              if (!d.isValid() || !that.get('value')) {
+              if (!d.isValid() || !that.get('date')) {
                 if (that.get('allowBlank')) {
                   // allowBlank means `null` is ok, so use that
                   return that.set('date', null);
@@ -135,9 +135,17 @@ export default Ember.TextField.extend({
         d = d.format(this.get('valueFormat'));
       }
 
-      this.set('date', d);
+      // allow a call back to handle controller updates 
+      // or default to Ember.Textfield behavior
+      if (this.get('onClose')) {
+        this.get('onClose')(d);
+      } else {
+        this.set('date', d);
+      }
   },
-
+  willClearRendaer() {
+    this.$().off();
+  },
   /**
    * Propper teardown to remove Pickady from the dom when the component gets
    * destroyed.
@@ -146,7 +154,13 @@ export default Ember.TextField.extend({
     this.get('_picker').destroy();
     this._super();
   },
-
+  /**
+   * Change handler on input, to synchronize text entry and not rely on the
+   * onClose() Pikaday callback for state updates
+   */
+  change(event) {
+    this.set('date', event.target.value);
+  },
   /**
    * Update Pikaday's displayed date after bound `date` changed and also after
    * the initial `didInsertElement`.
@@ -157,17 +171,20 @@ export default Ember.TextField.extend({
    * If no `date` is set in the data source, it depends on `allowBlank` whether
    * "new Date()" is used or an invalid date will force Pikaday to clear the
    * input element shown on the page.
+   * 
+   * MODIFIED: Listens to initial value (initDate) passed in by parent component, then 
+   * sets that value to local state (date)
    */
   setDate: function() {
     var d = null;
-    if (!Ember.isBlank(this.get('date'))) {
+    if (!Ember.isBlank(this.get('initDate'))) {
       // serialize moment.js date either from plain date object or string
-      if (this.get('valueFormat') === 'date') {
-        d = window.moment(this.get('date'));
+      if (this.get('valueFormat') === 'initDate') {
+        d = window.moment(this.get('initDate'));
       } else if (this.get('valueFormat') === 'moment') {
-        d = this.get('date');
+        d = this.get('initDate');
       } else {
-        d = window.moment(this.get('date'), this.get("valueFormat"));
+        d = window.moment(this.get('initDate'), this.get('valueFormat'));
       }
     } else {
       // no date was found in data source. Either respect that or set it to now
@@ -183,8 +200,12 @@ export default Ember.TextField.extend({
         this._setControllerDate(d);
       }
     }
+    let date = d.format(this.get('valueFormat')) === 'Invalid date' ? '' :
+      d.format(this.get('valueFormat'));
+
+    this.set('date', date);
     this.get('_picker').setDate(d.format());
-  }.observes('date'),
+  }.observes('initDate'),
   /**
    * Update Pikaday's minDate after bound `minDate` changed and also after
    * the initial `didInsertElement`.
